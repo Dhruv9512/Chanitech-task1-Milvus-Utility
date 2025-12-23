@@ -1,5 +1,5 @@
 from sentence_transformers import SentenceTransformer
-from typing import List, Dict
+from typing import List, Dict, Any
 from langchain_core.documents import Document
 from rest_framework.response import Response
 from rest_framework import status
@@ -20,7 +20,8 @@ from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEndpointEmbeddings
 from langchain_community.vectorstores import Milvus
 from .models import BaseKnowledge,KnowledgeBaseDetails
-from .utility import fetch_data, get_extension_from_url,fetch_and_convert_to_md,create_collection,clean_domain,clean_parent_batch_id,get_embedding_cost
+from .utility import fetch_markdown, get_extension_from_url,fetch_and_convert_to_md,create_collection,clean_domain,clean_parent_batch_id,get_embedding_cost,MYSQL_CONFIG
+import mysql.connector
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -187,22 +188,26 @@ class MilvusUtility:
         try:
             while True:
                 # Fetch data from HtmlToMarkdownConversion model
-                markdown_content,link_id,link_url_hash,xml_id,s3_url,urls = fetch_data(batch_id, offset=OFFSET, limit=fetch_limit)
+                markdown_content, urls, link_id, link_url_hash, xml_id, s3_url, json_ld_schema = fetch_markdown(
+                    batch_id, 
+                    skip=OFFSET, 
+                    limit=fetch_limit
+                )
                 if not markdown_content:
                     break
 
                 # Filtering the urls that alrady in KnowledgeBaseDetails
-                filter_data=self._filter_existing_data(batch_id, markdown_content, link_id, link_url_hash, xml_id, s3_url, urls)
+                filter_data=self._filter_existing_data(batch_id, markdown_content, link_id, link_url_hash, xml_id, s3_url, urls,json_ld_schema)
                 
                 if filter_data is True:
                     logger.info(f"Skipping offset {OFFSET}: All items already exist.")
                     OFFSET += fetch_limit
                     continue
 
-                markdown_content, link_id, link_url_hash, xml_id, s3_url, urls = filter_data
+                markdown_content, link_id, link_url_hash, xml_id, s3_url, urls,json_ld_schema = filter_data
 
                 # Process the data from those fetched results
-                MarkdownContents=self._process_data(markdown_content,link_id,link_url_hash,xml_id,s3_url,batch_id,urls)
+                MarkdownContents=self._process_data(markdown_content,link_id,link_url_hash,xml_id,s3_url,batch_id,urls,json_ld_schema)
 
                 self._send_ws_update(f"Processing batch {batch_id} Successfully")
                 # Chunk the data and make Documents
@@ -213,7 +218,7 @@ class MilvusUtility:
 
                 self._send_ws_update(f"Inserting batch {batch_id} Successfully")
                 # Make a KnowledgeBaseDetails entry for tracking progress
-                self._KnowledgeBaseDetails_Entry(link_id,urls,link_url_hash,xml_id,batch_id)
+                self._KnowledgeBaseDetails_Entry(link_id,urls,link_url_hash,xml_id,batch_id,json_ld_schema)
 
                 # Update and Calculate token and Price as par document
                 token,token_cost=get_embedding_cost(results,self.embedding_model_name)
@@ -227,39 +232,28 @@ class MilvusUtility:
        
 
     # Function to process the fetched data and Return the List of Documents
-    def _process_data(self, markdown_content: List[str],link_id: List[str],link_url_hash: List[str],xml_id: List[str],s3_url: List[str], batch_id: str, urls: List[str]) -> List[List[Dict]]:
+    def _process_data(self, markdown_content: List[str],link_id: List[str],link_url_hash: List[str],xml_id: List[str],s3_url: List[str], batch_id: str, urls: List[str],json_ld_schema:List[Dict[str, Any]]) -> List[List[Dict]]:
         
         if not markdown_content:
             return Response({'error': 'No data found for the given batch_id'}, status=status.HTTP_404_NOT_FOUND)
         
         MarkdownContents=[]
-        for markdown, url, s3 in zip(markdown_content, urls, s3_url):
+        for markdown, url, s3,jls in zip(markdown_content, urls, s3_url,json_ld_schema):
             try:
                 ext = get_extension_from_url(url)
-                default_metadata = {
-                        "domain": self.domain,
-                        "parent_batch_id": str(self.parent_batch_id),
-                        "batch_id": batch_id,
-                        "section": "",       
-                        "start_index": -1, 
-                        "doc_index": -1,    
-                        "end_index": -1      
-                    }
                 if ext in ['.pdf']:
-                    MarkdownContents.extend(self._get_pdf_data( url, s3))
+                    MarkdownContents.extend(self._get_pdf_data(url, s3,jls,batch_id))
                     self._send_ws_update(f"Process pdf data of batch {batch_id} Successfully")
                 else:
-                    MarkdownContents.extend(self._get_markdown_data(markdown, url, s3))
+                    MarkdownContents.extend(self._get_markdown_data(markdown, url, s3,jls,batch_id))
                     self._send_ws_update(f"Process markdown data of batch {batch_id} Successfully")
-                for c in MarkdownContents:
-                    c.setdefault("metadata", {}).update(default_metadata)
             except Exception as e:
                 logger.error(f"Error processing item {url}: {e}")
                 continue
         return MarkdownContents
 
     # Function to get text and metadata from PDF documents
-    def _get_pdf_data(self, url: str, s3_url: str) -> List[Dict]:
+    def _get_pdf_data(self, url: str, s3_url: str,json_ld_schema:List[Dict[str, Any]],batch_id:str) -> List[Dict]:
         ans = []
 
         try:
@@ -289,6 +283,14 @@ class MilvusUtility:
                         "pdf_author": pdf_metadata.get("author", ""),
                         "pdf_subject": pdf_metadata.get("subject", ""),
                         "pdf_keywords": pdf_metadata.get("keywords", ""),
+                        "json_ld_schema":json_ld_schema,
+                        "batch_id":batch_id,
+                        "section": "",       
+                        "start_index": -1, 
+                        "doc_index": -1,    
+                        "end_index": -1 ,
+                        "domain": self.domain,
+                        "parent_batch_id": str(self.parent_batch_id) 
                     }
 
                     ans.append({
@@ -313,12 +315,12 @@ class MilvusUtility:
         return ans
     
     # Function to get text and metadata from markdown content url
-    def _get_markdown_data(self, markdown_content: List[str], url: str, s3_url: str) -> List[Dict]:
+    def _get_markdown_data(self, markdown_content: List[str], url: str, s3_url: str,json_ld_schema:List[Dict[str, Any]],batch_id:str) -> List[Dict]:
         try:
             if isinstance(markdown_content, str) and (
                 markdown_content.startswith("http://") or markdown_content.startswith("https://")
             ):
-                response = requests.get(s3_url, timeout=30)
+                response = requests.get(markdown_content, timeout=30)
                 response.raise_for_status()
                 text = fetch_and_convert_to_md(response.text)
             else:
@@ -329,7 +331,15 @@ class MilvusUtility:
                 "doc_url": s3_url if s3_url else url,
                 "type": "markdown",
                 "original_type": "md",
-                "page": 1
+                "page": 1,
+                "json_ld_schema":json_ld_schema,
+                "batch_id":batch_id,
+                "section": "",       
+                "start_index": -1, 
+                "doc_index": -1,    
+                "end_index": -1 ,
+                "domain": self.domain,
+                "parent_batch_id": str(self.parent_batch_id) 
             }
 
             return [{"text": text, "metadata": metadata}]
@@ -462,41 +472,26 @@ class MilvusUtility:
                     "Milvus disconnect warning",
                     exc_info=True
                 )
-
-    # Create Mysql Connecter method
     @contextmanager
     def _get_mysql_connection(self):
-        connection = None
-        cursor = None
+        """Context manager for MySQL connections."""
+        conn = None
         try:
-            connection = pymysql.connect(
-                host=os.getenv("MYSQL_HOST"),
-                user=os.getenv("MYSQL_USER"),
-                password=os.getenv("MYSQL_PASSWORD"),
-                database=os.getenv("MYSQL_DB_NAME"),
-                port=int(os.getenv("MYSQL_PORT", 3306)),
-                cursorclass=pymysql.cursors.DictCursor
-            )
-            cursor = connection.cursor()
-            yield connection, cursor
-        except Exception:
-            logger.exception("MySQL connection error")
+            conn = mysql.connector.connect(**MYSQL_CONFIG)
+            cursor = conn.cursor()
+            yield conn, cursor
+        except Exception as e:
+            logger.error(f"MySQL connection error: {e}")
             raise
         finally:
-            try:
-                if cursor:
-                    cursor.close()
-                if connection:
-                    connection.close()
-            except Exception:
-                pass
-
+            if conn:
+                conn.close()
     # Method to do entries in Kn
-    def _KnowledgeBaseDetails_Entry(self, link_ids: List, urls: List[str], url_hashes: List[str], xml_ids: List, batch_id: str) -> int:
+    def _KnowledgeBaseDetails_Entry(self, link_ids: List, urls: List[str], url_hashes: List[str], xml_ids: List, batch_id: str,json_ld_schema:List[Dict[str, Any]]) -> int:
         try:
             entries = []
 
-            for link_id, url, url_hash, xml_id in zip(link_ids, urls, url_hashes, xml_ids):
+            for link_id, url, url_hash, xml_id,jls in zip(link_ids, urls, url_hashes, xml_ids,json_ld_schema):
                 entries.append(
                     KnowledgeBaseDetails(
                         link_id=link_id,
@@ -506,7 +501,8 @@ class MilvusUtility:
                         batch_id=batch_id,
                         xml_id=xml_id,
                         milvus_collection_name=self.collection_name,
-                        file_name=None
+                        file_name=None,
+                        json_ld_schema=jls
                     )
                 )
             if entries:
@@ -544,7 +540,7 @@ class MilvusUtility:
 
 
     # Filtering the urls that alrady in KnowledgeBaseDetails
-    def _filter_existing_data(self, batch_id: str, markdown_content: list, link_id: list, link_url_hash: list, xml_id: list, s3_url: list, urls: list):
+    def _filter_existing_data(self, batch_id: str, markdown_content: list, link_id: list, link_url_hash: list, xml_id: list, s3_url: list, urls: list, json_ld_schema: List[Dict[str, Any]]):
 
         try:
             existing_hashes = set(
@@ -554,7 +550,7 @@ class MilvusUtility:
 
             if not existing_hashes:
                 self._send_ws_update(f"No existing data found for batch {batch_id}")
-                return markdown_content, link_id, link_url_hash, xml_id, s3_url, urls
+                return markdown_content, link_id, link_url_hash, xml_id, s3_url, urls,json_ld_schema
 
             zipped_data = zip(
                 markdown_content,
@@ -562,7 +558,8 @@ class MilvusUtility:
                 link_url_hash,
                 xml_id,
                 s3_url,
-                urls
+                urls,
+                json_ld_schema
             )
 
             filtered_rows = [
