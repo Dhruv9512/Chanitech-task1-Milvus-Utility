@@ -20,7 +20,8 @@ from django.db import transaction
 import chardet
 from django.core.files.uploadedfile import UploadedFile
 from bs4 import BeautifulSoup
-
+import mysql.connector
+import tempfile
 
 EMBEDDING_DIM_MAP = {
     "paraphrase-multilingual-MiniLM-L12-v2": 384,
@@ -103,6 +104,7 @@ def create_collection(collection_name: str,embedding_model_name: str)-> None:
         FieldSchema(name="end_index", dtype=DataType.INT64, is_nullable=True),
 
         FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=65535),
+        FieldSchema(name="json_ld_schema", dtype=DataType.JSON,default=dict, blank=True, null=True)
     ]
 
     schema = CollectionSchema(
@@ -122,29 +124,59 @@ def clean_parent_batch_id(parent_batch_id: str):
     return str(parent_batch_id).replace('-', '_')
 
 # Function to fetch data from HtmlToMarkdownConversion model based on batch_id
-def fetch_data(batch_id: str,offset: int = 0,limit: int = 10) -> List[List[Any]]:
-    results = (
-        HtmlToMarkdownConversion.objects
-        .filter(batch_id=batch_id)
-        .order_by("id")
-        .values(
-            "markdown_content",
-            "link_id",
-            "link_url_hash",
-            "xml_id",
-            "s3_url",
-            "link_url",
-        )[offset : offset + limit]
-    )
+MYSQL_CONFIG={
+    "host":os.getenv("MYSQL_HOST"),
+    "user":os.getenv("MYSQL_USER"),
+    "password":os.getenv("MYSQL_PASSWORD"),
+    "database":os.getenv("MYSQL_DB_NAME"),
+    "port":int(os.getenv("MYSQL_PORT", 3306))
+}
+def fetch_markdown(batch_id, skip, limit):
+    conn = mysql.connector.connect(**MYSQL_CONFIG)
+    cursor = conn.cursor()
+    batch_id = str(batch_id).replace('-', '')
+    query1 = f"""
+    SELECT scan_id
+    FROM link_scrapper_app_basehtmltomarkdownconversion
+    WHERE batch_id = %s
+    LIMIT 1;
+    """
+    print(f"scan query1: {query1} - {batch_id}")
+    cursor.execute(query1, (batch_id,))
+    scan_ids = cursor.fetchone()
+    print(f"scan_ids: {scan_ids}")
+    scan_id = scan_ids[0]
 
-    markdown_content = [result["markdown_content"] for result in results]
-    link_id = [result["link_id"] for result in results]
-    link_url_hash = [result["link_url_hash"] for result in results]
-    xml_id = [result["xml_id"] for result in results]
-    s3_url = [result["s3_url"] for result in results]
-    urls = [result["link_url"] for result in results]
-    return [markdown_content,link_id,link_url_hash,xml_id,s3_url,urls]
+    if scan_id:
+        query = f"""
+        SELECT markdown_content, link_url, link_id, link_url_hash, xml_id, document_url,json_ld_schema
+        FROM link_scrapper_app_htmltomarkdownconversion
+        WHERE scan_id={scan_id} AND batch_id = %s
+        LIMIT {skip}, {limit};
+        """
+    else:
+        query = f"""
+        SELECT markdown_content, link_url, link_id, link_url_hash, xml_id, document_url, json_ld_schema
+        FROM link_scrapper_app_htmltomarkdownconversion
+        WHERE scan_id is null AND batch_id = %s
+        LIMIT {skip}, {limit};
+        """
 
+    # print(f"fetch query: {query} - {batch_id}")
+    cursor.execute(query, (batch_id,))
+    rows = cursor.fetchall()
+    # print(f"ROWS: {rows}")
+    markdown_contents = [row[0] for row in rows]
+    urls = [row[1] for row in rows]
+    link_ids = [row[2] for row in rows]
+    link_url_hashes = [row[3] for row in rows]
+    xml_ids = [row[4] for row in rows]
+    s3_urls = [row[5] for row in rows]
+    json_ld_schema=[row[6] for row in rows]
+    conn.close()
+
+    return markdown_contents, urls, link_ids, link_url_hashes, xml_ids, s3_urls,json_ld_schema
+ 
 
 
 # Utility function to extract file extension from URL
