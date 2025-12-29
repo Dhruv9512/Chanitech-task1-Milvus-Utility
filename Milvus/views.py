@@ -3,46 +3,10 @@ from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from user.models import User
-from .utility import HtmlToMarkdownUtil
 from .tasks import create_and_build_task
 from .serializers import BaseKnowledgeSerializer
-from rest_framework.parsers import MultiPartParser, FormParser
 
 
-# View that triggers and insert the llm ready data into HtmlToMarkdownConversion model
-class ImportConversionDataView(APIView):
-    permission_classes = [AllowAny]
-    parser_classes = (MultiPartParser, FormParser)
-
-    def post(self, request, format=None):
-        uploaded_file = request.FILES.get("file")
-
-        if not uploaded_file:
-            return Response(
-                {"error": "No file provided"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        try:
-            records = HtmlToMarkdownUtil().create_and_insert(uploaded_file)
-
-            return Response(
-                {
-                    "status": "success",
-                    "message": f"Successfully imported {len(records)} records."
-                },
-                status=status.HTTP_201_CREATED
-            )
-
-        except Exception as e:
-            # IMPORTANT: log real error in console
-            import traceback
-            traceback.print_exc()
-
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
 
 # Function to validate user from user_id
 def validate_user_id(user_id)->object:
