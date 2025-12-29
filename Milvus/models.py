@@ -165,7 +165,6 @@ class HtmlToMarkdownConversion(models.Model):
 
     class Meta:
         db_table = "link_scrapper_app_htmltomarkdownconversion"
-        unique_together = ('scan_id','xml_id', 'link_url_hash', 'batch_id')
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=["batch_id"], name="batch_id_idx_markdown_1"),
