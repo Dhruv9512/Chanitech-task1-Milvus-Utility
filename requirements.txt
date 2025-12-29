@@ -24,3 +24,4 @@ channels
 py7zr
 beautifulsoup4
 lxml
+mysql-connector-python
