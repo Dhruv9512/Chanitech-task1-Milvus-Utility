@@ -36,7 +36,11 @@ class BaseKnowledgeSerializer(ModelSerializer):
         # 1. Pop non-model fields
         user_id = validated_data.pop('user_id', None)
         is_openai = validated_data.pop('is_openai', False)
-    
+        if is_openai:
+            validated_data['embeded_model_name'] = 'intfloat/multilingual-e5-large'
+        else:
+            validated_data['embeded_model_name'] = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'
+
         input_batch_id = validated_data.get('parent_batch_id', None)
         obj = None
         if input_batch_id:
