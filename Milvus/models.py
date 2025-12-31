@@ -71,8 +71,8 @@ class BaseHtmlToMarkdownConversion(models.Model):
     markdown_total_summary_count = models.IntegerField(default=0)
     markdown_conversion_url_count = models.IntegerField(default=0)
     category = models.CharField(max_length=50, null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True,null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True,null=True, blank=True)
     include_parents_path = models.JSONField(default=list, blank=True)
     domain = models.CharField(max_length=100)
     exclude_parents_path = models.JSONField(default=list, blank=True)
@@ -157,8 +157,8 @@ class HtmlToMarkdownConversion(models.Model):
     schema = models.JSONField(default=dict, blank=True, null=True)
     detect_lang_details = models.JSONField(default=dict, blank=True, null=True)
 
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True,null=True, blank=True)
 
     def __str__(self):
         return f"{self.link_url} -> {self.visitor_id}"

@@ -107,7 +107,7 @@ def clean_domain(domain: str):
     return re.sub(r'[^a-zA-Z0-9_]', '_', domain)
 
 def clean_parent_batch_id(parent_batch_id: str):
-    return str(parent_batch_id).replace('-', '_')
+    return str(parent_batch_id).replace('-', '')
 
 # Function to fetch data from HtmlToMarkdownConversion model based on batch_id
 MYSQL_CONFIG={

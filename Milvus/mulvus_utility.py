@@ -502,7 +502,7 @@ class MilvusUtility:
                         xml_id=xml_id,
                         milvus_collection_name=self.collection_name,
                         file_name=None,
-                        json_ld_schema=jls
+                        json_ld_schema=jls,
                     )
                 )
             if entries:

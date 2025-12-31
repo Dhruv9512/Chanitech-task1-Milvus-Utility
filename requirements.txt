@@ -12,6 +12,7 @@ sentence-transformers
 djangorestframework-simplejwt
 openai
 langchain
+langgraph
 langchain_huggingface
 langchain_openai
 pymupdf 
@@ -25,3 +26,4 @@ py7zr
 beautifulsoup4
 lxml
 mysql-connector-python
+langchain-groq
